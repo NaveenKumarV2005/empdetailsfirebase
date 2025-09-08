@@ -309,9 +309,12 @@ public class ModifyEmployeeActivity extends AppCompatActivity {
 ## OUTPUT
 ## List Employee
 <img width="342" height="648" alt="Screenshot 2025-09-08 104943" src="https://github.com/user-attachments/assets/f8230b9c-7ac9-4ad1-b88f-fa6d8da07ac7" />
+
 ## Update & Delete Employee
 <img width="339" height="651" alt="Screenshot 2025-09-08 102833" src="https://github.com/user-attachments/assets/06aeb2a8-dc93-41ee-8a68-7ab3e4648b36" />
+
 ## Add Employee
 <img width="333" height="648" alt="Screenshot 2025-09-08 102745" src="https://github.com/user-attachments/assets/19e3e548-03bb-427c-9cd3-f1d4054da71a" />
+
 ## RESULT
 Thus a Simple Android Application create a firebase database and to display the employee details using Firbase Real Time Database in Android Studio is developed and executed successfully.
