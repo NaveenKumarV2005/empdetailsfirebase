@@ -34,287 +34,368 @@ Developed by: Naveen Kumar V
 Registeration Number : 212223220068
 */
 ```
-## Employee.java
+## MainActivity.java
 ```
-package com.example.employeeapp;
+package com.example.myapplication;
 
-public class Employee {
-    private String id;
-    private String name;
-    private String salary;
-    public Employee() {}
-
-    public Employee(String id, String name, String salary) {
-        this.id = id;
-        this.name = name;
-        this.salary = salary;
-    }
-
-    public String getId() { return id; }
-    public String getName() { return name; }
-    public String getSalary() { return salary; }
-
-    @Override
-    public String toString() {
-        return name + " - ₹" + salary;
-    }
-}
-``` 
-## DBManager.java
-```
-package com.example.employeeapp;
-
-import com.google.firebase.database.DatabaseReference;
-import com.google.firebase.database.FirebaseDatabase;
-
-public class DBManager {
-    private DatabaseReference dbRef;
-
-    public DBManager() {
-        dbRef = FirebaseDatabase.getInstance().getReference("employees");
-    }
-    public void insertEmployee(Employee employee) {
-        String key = dbRef.push().getKey();
-        employee = new Employee(key, employee.getName(), employee.getSalary());
-        dbRef.child(key).setValue(employee);
-    }
-    public void updateEmployee(Employee employee) {
-        dbRef.child(employee.getId()).setValue(employee);
-    }
-    public void deleteEmployee(String id) {
-        dbRef.child(id).removeValue();
-    }
-
-    public DatabaseReference getDatabaseRef() {
-        return dbRef;
-    }
-}
-```
-## EmployeeListActivity.java
-```
-package com.example.employeeapp;
-
-import android.content.Intent;
 import android.os.Bundle;
+import android.text.TextUtils;
+import android.view.LayoutInflater;
+import android.view.View;
 import android.widget.ArrayAdapter;
-import android.widget.ListView;
+import android.widget.AutoCompleteTextView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.widget.SearchView;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.button.MaterialButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
+import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.database.DataSnapshot;
 import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.ValueEventListener;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
-public class EmployeeListActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements ItemAdapter.OnItemClickListener {
 
-    private ListView listView;
-    private ArrayAdapter<Employee> adapter;
-    private ArrayList<Employee> employees;
-    private DBManager dbManager;
+    private static final String[] CATEGORIES = {"General", "Work", "Personal", "Urgent", "Shopping"};
+
+    private DatabaseReference itemsRef;
+    private ItemAdapter adapter;
+    private ProgressBar progressBar;
+    private LinearLayout layoutEmpty;
+    private RecyclerView recyclerView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_employee_list);
+        setContentView(R.layout.activity_main);
 
-        listView = findViewById(R.id.listView);
-        dbManager = new DBManager();
-        employees = new ArrayList<>();
-
-        adapter = new ArrayAdapter<>(this, android.R.layout.simple_list_item_1, employees);
-        listView.setAdapter(adapter);
-
-        loadEmployees();
-        listView.setOnItemClickListener((parent, view, position, id) -> {
-            Employee selected = employees.get(position);
-            Intent intent = new Intent(EmployeeListActivity.this, ModifyEmployeeActivity.class);
-            intent.putExtra("id", selected.getId());
-            intent.putExtra("name", selected.getName());
-            intent.putExtra("salary", selected.getSalary());
-            startActivity(intent);
+        // Apply EdgeToEdge insets
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
+            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
+            return insets;
         });
-        listView.setOnItemLongClickListener((parent, view, position, id) -> {
-            Employee selected = employees.get(position);
-            dbManager.deleteEmployee(selected.getId());
-            return true;
-        });
-    }
 
-    private void loadEmployees() {
-        dbManager.getDatabaseRef().addValueEventListener(new ValueEventListener() {
+        // Initialize Firebase Realtime Database
+        FirebaseDatabase database = FirebaseDatabase.getInstance();
+        itemsRef = database.getReference("items");
+
+        // Initialize UI components
+        progressBar = findViewById(R.id.progressBar);
+        layoutEmpty = findViewById(R.id.layoutEmpty);
+        recyclerView = findViewById(R.id.recyclerView);
+        SearchView searchView = findViewById(R.id.searchView);
+        FloatingActionButton fabAdd = findViewById(R.id.fabAdd);
+
+        // Setup RecyclerView
+        adapter = new ItemAdapter(this);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+        recyclerView.setAdapter(adapter);
+
+        // FAB Click listener to create new item
+        fabAdd.setOnClickListener(v -> showAddEditDialog(null));
+
+        // SearchView listener for real-time filtering
+        searchView.setOnQueryTextListener(new SearchView.OnQueryTextListener() {
             @Override
-            public void onDataChange(@NonNull DataSnapshot snapshot) {
-                employees.clear();
-                for (DataSnapshot ds : snapshot.getChildren()) {
-                    Employee emp = ds.getValue(Employee.class);
-                    if (emp != null) employees.add(emp);
-                }
-                adapter.notifyDataSetChanged();
+            public boolean onQueryTextSubmit(String query) {
+                adapter.filter(query);
+                return true;
             }
 
             @Override
-            public void onCancelled(@NonNull DatabaseError error) {}
+            public boolean onQueryTextChange(String newText) {
+                adapter.filter(newText);
+                return true;
+            }
+        });
+
+        // Realtime listener for Read operations
+        listenForRealtimeUpdates();
+    }
+
+    private void listenForRealtimeUpdates() {
+        progressBar.setVisibility(View.VISIBLE);
+        itemsRef.addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                List<Item> items = new ArrayList<>();
+                for (DataSnapshot itemSnapshot : snapshot.getChildren()) {
+                    Item item = itemSnapshot.getValue(Item.class);
+                    if (item != null) {
+                        if (item.getId() == null || item.getId().isEmpty()) {
+                            item.setId(itemSnapshot.getKey());
+                        }
+                        items.add(item);
+                    }
+                }
+
+                // Sort items by timestamp in descending order (newest first)
+                Collections.sort(items, (i1, i2) -> Long.compare(i2.getTimestamp(), i1.getTimestamp()));
+
+                adapter.setItems(items);
+                progressBar.setVisibility(View.GONE);
+
+                if (items.isEmpty()) {
+                    layoutEmpty.setVisibility(View.VISIBLE);
+                    recyclerView.setVisibility(View.GONE);
+                } else {
+                    layoutEmpty.setVisibility(View.GONE);
+                    recyclerView.setVisibility(View.VISIBLE);
+                }
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                progressBar.setVisibility(View.GONE);
+                Toast.makeText(MainActivity.this, "Error: " + error.getMessage(), Toast.LENGTH_LONG).show();
+            }
         });
     }
 
-    public void addEmployee(android.view.View view) {
-        startActivity(new Intent(this, AddEmployeeActivity.class));
-    }
-}
-```
-## AddEmployeeActivity.java
-```
-package com.example.employeeapp;
+    // CREATE / UPDATE Dialog
+    private void showAddEditDialog(Item itemToEdit) {
+        View dialogView = LayoutInflater.from(this).inflate(R.layout.dialog_add_edit_item, null);
 
-import android.os.Bundle;
-import android.view.View;
-import android.widget.EditText;
-import android.widget.Toast;
+        TextView tvDialogTitle = dialogView.findViewById(R.id.tvDialogTitle);
+        TextInputEditText etTitle = dialogView.findViewById(R.id.etTitle);
+        AutoCompleteTextView actvCategory = dialogView.findViewById(R.id.actvCategory);
+        TextInputEditText etDescription = dialogView.findViewById(R.id.etDescription);
+        MaterialButton btnCancel = dialogView.findViewById(R.id.btnCancel);
+        MaterialButton btnSave = dialogView.findViewById(R.id.btnSave);
 
-import androidx.appcompat.app.AppCompatActivity;
+        // Setup Category dropdown options
+        ArrayAdapter<String> categoryAdapter = new ArrayAdapter<>(this, android.R.layout.simple_dropdown_item_1line, CATEGORIES);
+        actvCategory.setAdapter(categoryAdapter);
 
-public class AddEmployeeActivity extends AppCompatActivity {
-
-    private EditText etName, etSalary;
-    private DBManager dbManager;
-
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_add_employee);
-
-        etName = findViewById(R.id.etName);
-        etSalary = findViewById(R.id.etSalary);
-        dbManager = new DBManager();
-    }
-
-    public void saveEmployee(View view) {
-        String name = etName.getText().toString().trim();
-        String salary = etSalary.getText().toString().trim();
-
-        if (name.isEmpty() || salary.isEmpty()) {
-            Toast.makeText(this, "Enter all fields", Toast.LENGTH_SHORT).show();
-            return;
+        boolean isEditing = itemToEdit != null;
+        if (isEditing) {
+            tvDialogTitle.setText("Edit Item");
+            etTitle.setText(itemToEdit.getTitle());
+            actvCategory.setText(itemToEdit.getCategory(), false);
+            etDescription.setText(itemToEdit.getDescription());
+            btnSave.setText("Update");
+        } else {
+            tvDialogTitle.setText("Add New Item");
+            actvCategory.setText(CATEGORIES[0], false);
+            btnSave.setText("Add");
         }
 
-        dbManager.insertEmployee(new Employee(null, name, salary));
-        Toast.makeText(this, "Employee Added", Toast.LENGTH_SHORT).show();
-        finish();
+        AlertDialog dialog = new MaterialAlertDialogBuilder(this)
+                .setView(dialogView)
+                .setCancelable(true)
+                .create();
+
+        btnCancel.setOnClickListener(v -> dialog.dismiss());
+
+        btnSave.setOnClickListener(v -> {
+            String title = etTitle.getText() != null ? etTitle.getText().toString().trim() : "";
+            String category = actvCategory.getText() != null ? actvCategory.getText().toString().trim() : "";
+            String description = etDescription.getText() != null ? etDescription.getText().toString().trim() : "";
+
+            if (TextUtils.isEmpty(title)) {
+                etTitle.setError("Title is required");
+                etTitle.requestFocus();
+                return;
+            }
+
+            long currentTimestamp = System.currentTimeMillis();
+
+            if (isEditing) {
+                // UPDATE
+                itemToEdit.setTitle(title);
+                itemToEdit.setCategory(category);
+                itemToEdit.setDescription(description);
+                itemToEdit.setTimestamp(currentTimestamp);
+
+                itemsRef.child(itemToEdit.getId()).setValue(itemToEdit)
+                        .addOnSuccessListener(aVoid -> {
+                            Toast.makeText(MainActivity.this, "Item updated successfully", Toast.LENGTH_SHORT).show();
+                            dialog.dismiss();
+                        })
+                        .addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to update: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+            } else {
+                // CREATE
+                String newId = itemsRef.push().getKey();
+                if (newId != null) {
+                    Item newItem = new Item(newId, title, description, category, currentTimestamp);
+                    itemsRef.child(newId).setValue(newItem)
+                            .addOnSuccessListener(aVoid -> {
+                                Toast.makeText(MainActivity.this, "Item added successfully", Toast.LENGTH_SHORT).show();
+                                dialog.dismiss();
+                            })
+                            .addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to add: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+                }
+            }
+        });
+
+        dialog.show();
     }
-}
-```
-## ModifyEmployeeActivity.java
-```
-package com.example.employeeapp;
-
-import android.os.Bundle;
-import android.view.View;
-import android.widget.EditText;
-import android.widget.Toast;
-
-import androidx.appcompat.app.AppCompatActivity;
-
-public class ModifyEmployeeActivity extends AppCompatActivity {
-
-    private EditText etName, etSalary;
-    private DBManager dbManager;
-    private String employeeId;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_modify_employee);
-
-        etName = findViewById(R.id.etName);
-        etSalary = findViewById(R.id.etSalary);
-        dbManager = new DBManager();
-
-        employeeId = getIntent().getStringExtra("id");
-        etName.setText(getIntent().getStringExtra("name"));
-        etSalary.setText(getIntent().getStringExtra("salary"));
+    public void onEditClick(Item item) {
+        showAddEditDialog(item);
     }
 
-    public void updateEmployee(View view) {
-        String name = etName.getText().toString().trim();
-        String salary = etSalary.getText().toString().trim();
-
-        if (name.isEmpty() || salary.isEmpty()) {
-            Toast.makeText(this, "Enter all fields", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        dbManager.updateEmployee(new Employee(employeeId, name, salary));
-        Toast.makeText(this, "Employee Updated", Toast.LENGTH_SHORT).show();
-        finish();
+    @Override
+    public void onDeleteClick(Item item) {
+        showDeleteConfirmation(item);
     }
-
-    public void deleteEmployee(View view) {
-        dbManager.deleteEmployee(employeeId);
-        Toast.makeText(this, "Employee Deleted", Toast.LENGTH_SHORT).show();
-        finish();
+    private void showDeleteConfirmation(Item item) {
+        new MaterialAlertDialogBuilder(this)
+                .setTitle("Delete Item")
+                .setMessage("Are you sure you want to delete \"" + item.getTitle() + "\"?")
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    itemsRef.child(item.getId()).removeValue()
+                            .addOnSuccessListener(aVoid -> Toast.makeText(MainActivity.this, "Item deleted", Toast.LENGTH_SHORT).show())
+                            .addOnFailureListener(e -> Toast.makeText(MainActivity.this, "Failed to delete: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+                })
+                .setNegativeButton("Cancel", (dialog, which) -> dialog.dismiss())
+                .show();
     }
 }
+
+``` 
+## activity_main.xml
 ```
-## activity_employee_list.xml
-```
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
-    android:padding="16dp"
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="?attr/colorSurface"
+    tools:context=".MainActivity">
 
-    <Button
-        android:text="Add Employee"
-        android:onClick="addEmployee"
+    <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        android:layout_height="wrap_content">
 
-    <ListView
-        android:id="@+id/listView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"/>
-</LinearLayout>
-```
-## activity_add_employee.xml
-```
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:orientation="vertical"
-    android:padding="16dp"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            app:title="Firebase CRUD"
+            app:titleTextColor="?attr/colorOnSurface" />
 
-    <EditText
-        android:id="@+id/etName"
-        android:hint="Employee Name"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+        <androidx.appcompat.widget.SearchView
+            android:id="@+id/searchView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_search_view"
+            app:iconifiedByDefault="false"
+            app:queryHint="Search items..." />
 
-    <EditText
-        android:id="@+id/etSalary"
-        android:hint="Salary"
-        android:inputType="number"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
+    </com.google.android.material.appbar.AppBarLayout>
 
-    <Button
-        android:text="Save"
-        android:onClick="saveEmployee"
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"/>
-</LinearLayout>
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:visibility="visible"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <LinearLayout
+            android:id="@+id/layoutEmpty"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <ImageView
+                android:layout_width="80dp"
+                android:layout_height="80dp"
+                android:contentDescription="Empty list"
+                android:src="@android:drawable/ic_menu_edit"
+                app:tint="?attr/colorOutline" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="No items found"
+                android:textColor="?attr/colorOnSurfaceVariant"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Tap '+' to add your first item"
+                android:textColor="?attr/colorOutline"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recyclerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingVertical="8dp"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            tools:listitem="@layout/item_row" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabAdd"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:contentDescription="Add item"
+        android:src="@android:drawable/ic_input_add"
+        app:tint="?attr/colorOnPrimaryContainer" />
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>
+
 ```
 ## OUTPUT
-## List Employee
-<img width="342" height="648" alt="Screenshot 2025-09-08 104943" src="https://github.com/user-attachments/assets/f8230b9c-7ac9-4ad1-b88f-fa6d8da07ac7" />
 
-## Update & Delete Employee
-<img width="339" height="651" alt="Screenshot 2025-09-08 102833" src="https://github.com/user-attachments/assets/06aeb2a8-dc93-41ee-8a68-7ab3e4648b36" />
+## List Employee
+<img width="540" height="1137" alt="WhatsApp Image 2026-11-02 at 8 46 10 AM" src="https://github.com/user-attachments/assets/4646bb96-182e-42b1-a54b-2e7c862b27bc" />
 
 ## Add Employee
-<img width="333" height="648" alt="Screenshot 2025-09-08 102745" src="https://github.com/user-attachments/assets/19e3e548-03bb-427c-9cd3-f1d4054da71a" />
+<img width="540" height="1137" alt="WhatsApp Image 2026-11-02 at 8 46 10 AM" src="https://github.com/user-attachments/assets/48376b07-98ce-48cd-88f4-84b3a71e9d3b" />
 
 ## RESULT
 Thus a Simple Android Application create a firebase database and to display the employee details using Firbase Real Time Database in Android Studio is developed and executed successfully.
